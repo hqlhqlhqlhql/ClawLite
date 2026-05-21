@@ -1,0 +1,2 @@
+Hello from ClawLite test!
+The answer is 开始.
