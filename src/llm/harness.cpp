@@ -49,6 +49,7 @@ RunResult AgentHarness::runTurn(
     }
 
     int roundCount = 0;
+    int toolCallCount = 0;
     int totalTokens = 0;
     LlmResponse lastResponse;
 
@@ -95,6 +96,7 @@ RunResult AgentHarness::runTurn(
                 ++roundCount;
 
                 const auto toolCalls = messages.back().toolCalls;
+                toolCallCount += static_cast<int>(toolCalls.size());
                 for (const auto& tc : toolCalls) {
                     ToolResult toolResult = m_tools.execute(tc);
                     Message toolMsg = Message::toolResult(
@@ -114,7 +116,7 @@ RunResult AgentHarness::runTurn(
 
             case AgentState::Responding:
                 result.status = RunStatus::Success;
-                result.totalTurns = roundCount;
+                result.totalTurns = toolCallCount;
                 result.totalTokens = totalTokens;
                 m_state = AgentState::Done;
                 break;
@@ -130,7 +132,7 @@ RunResult AgentHarness::runTurn(
         result.error = "agent harness entered error state";
     }
 
-    result.totalTurns = roundCount;
+    result.totalTurns = toolCallCount;
     result.totalTokens = totalTokens;
     m_state = AgentState::Idle;
     return result;

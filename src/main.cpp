@@ -10,6 +10,7 @@
 #include "llm/tool_executor.h"
 #include "llm/prompt_builder.h"
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #ifdef _WIN32
@@ -31,10 +32,22 @@ int main(int argc, char* argv[]) {
 
     // ── 初始化各模块 ──────────────────────────────────────
 
-    // A: 技能注册表
-    SkillRegistry skillRegistry;
-    // TODO: skillRegistry.loadFromWorkspace(".");
+   // 自动寻找项目根目录：先尝试当前目录，再尝试父目录
+    std::string workspaceDir = ".";
+    {
+        std::ifstream testFile("./skills/hello/SKILL.md");
+        if (!testFile.is_open()) {
+            testFile.open("../skills/hello/SKILL.md");
+            if (testFile.is_open()) {
+                workspaceDir = "..";
+            }
+        }
+    }
 
+    // ── A: 技能注册表 ─────────────────────────────────
+    SkillRegistry skillRegistry;
+    SkillFilterConfig filterCfg = SkillFilter::detectSystem();
+    skillRegistry.loadFromWorkspace(workspaceDir, filterCfg);
     // B: 上下文引擎（TODO: 实例化具体实现）
     // auto memory = ...;
 
@@ -62,7 +75,7 @@ int main(int argc, char* argv[]) {
 
     // ── REPL 循环 ─────────────────────────────────────────
 
-    std::string workspaceDir = ".";
+    //std::string workspaceDir = ".";
     while (true) {
         std::cout << "> ";
         std::string input;
@@ -122,6 +135,15 @@ int main(int argc, char* argv[]) {
         std::string systemPrompt = PromptBuilder::buildSystemPrompt(
             promptCtx, skillRegistry, nullptr
         );
+
+        const auto allTools = tools.getAllTools();
+        if (!allTools.empty()) {
+            systemPrompt += "\n\n";
+            systemPrompt += PromptBuilder::buildToolsPrompt(allTools);
+            systemPrompt += "\nTool-use policy:\n";
+            systemPrompt += "- Use multiple tools in one assistant turn when the user asks for multiple independent tasks.\n";
+            systemPrompt += "- If the user message contains both a greeting and another task, call the hello tool and the task tool(s).\n";
+        }
 
         std::vector<Message> history;  // TODO: 从 session 获取
         auto result = harness.runTurn(systemPrompt, history, input);

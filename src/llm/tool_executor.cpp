@@ -150,6 +150,27 @@ void ToolExecutor::registerTool(const Tool& tool) {
 }
 
 void ToolExecutor::registerBuiltinTools() {
+    Tool hello;
+    hello.name = "hello";
+    hello.description = "Return a friendly greeting. Use this when the user message starts with or contains a greeting.";
+    hello.parametersJson = R"({"type":"object","properties":{}})";
+    hello.handler = [](const std::string&) {
+        static const std::string replies[] = {
+            "Hello!",
+            "你好！",
+            "こんにちは！",
+            "안녕하세요！",
+            "Bonjour！",
+            "¡Hola！",
+            "Hallo！"
+        };
+        static thread_local size_t index = 0;
+        const std::string& reply = replies[index % (sizeof(replies) / sizeof(replies[0]))];
+        ++index;
+        return reply;
+    };
+    registerTool(hello);
+
     Tool calc;
     calc.name = "calculator";
     calc.description = "Evaluate an arithmetic expression with +, -, *, /, and parentheses.";

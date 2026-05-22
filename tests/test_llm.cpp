@@ -24,7 +24,8 @@ void testToolRegistryAndMissingTool() {
     ToolExecutor tools;
     tools.registerBuiltinTools();
 
-    TEST_ASSERT(tools.size() == 3);
+    TEST_ASSERT(tools.size() == 4);
+    TEST_ASSERT(tools.hasTool("hello"));
     TEST_ASSERT(tools.hasTool("calculator"));
 
     ToolCall missing;
@@ -34,6 +35,22 @@ void testToolRegistryAndMissingTool() {
     TEST_ASSERT(result.error.find("tool not found") != std::string::npos);
 
     std::cout << "  [PASS] testToolRegistryAndMissingTool\n";
+}
+
+void testHelloTool() {
+    ToolExecutor tools;
+    tools.registerBuiltinTools();
+
+    ToolCall call;
+    call.id = "call_hello";
+    call.name = "hello";
+    call.arguments = "{}";
+
+    ToolResult result = tools.execute(call);
+    TEST_ASSERT(result.success);
+    TEST_ASSERT(!result.output.empty());
+
+    std::cout << "  [PASS] testHelloTool\n";
 }
 
 void testCalculatorTool() {
@@ -96,6 +113,7 @@ int run_llm_tests() {
     RESET_FAILURES();
     testRuntimePlanValidation();
     testToolRegistryAndMissingTool();
+    testHelloTool();
     testCalculatorTool();
     testReadFileTool();
     testHarnessReturnsLlmError();

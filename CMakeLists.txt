@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
+# 强制指定 Windows 版本为 Win10，避免 httplib 误判
+if(WIN32)
+    add_definitions(-D_WIN32_WINNT=0x0A00)
+endif()
 project(ClawLite VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
