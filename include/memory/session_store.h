@@ -14,17 +14,6 @@
 
 namespace clawlite {
 
-// 会话键解析结果
-// 参考：openclaw-main/src/sessions/session-key-utils.ts:parseAgentSessionKey
-struct SessionKeyInfo {
-    std::string agentId;
-    std::string channel;
-    std::string peerKind;    // "user", "group", "channel"
-    std::string peerId;
-    std::string threadId;    // 可选
-    std::string rawKey;
-};
-
 class SessionStore {
 public:
     SessionStore() = default;
@@ -58,23 +47,13 @@ public:
     // 清空所有会话
     void clear();
 
-    // ── 会话键解析 ────────────────────────────────────────
+    // ── 持久化（JSONL 格式）───────────────────────────────
 
-    // 解析层级会话键
-    // 格式：agent:<agentId>:<channel>:<peerKind>:<peerId>[:thread:<threadId>]
-    // 参考：openclaw-main/src/sessions/session-key-utils.ts:parseAgentSessionKey
-    static SessionKeyInfo parseSessionKey(const std::string& key);
+    // 保存会话到 JSONL 文件（append-only）
+    void save(const std::string& path);
 
-    // 构建会话键
-    static std::string buildSessionKey(
-        const std::string& agentId,
-        const std::string& channel,
-        const std::string& peerKind,
-        const std::string& peerId
-    );
-
-    // 按 agent 查询会话列表
-    std::vector<std::string> listSessionsByAgent(const std::string& agentId) const;
+    // 从 JSONL 文件加载会话
+    void load(const std::string& path);
 
 private:
     // 数据结构：HashMap 按 sessionKey 索引

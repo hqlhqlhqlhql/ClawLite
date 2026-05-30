@@ -20,7 +20,8 @@ namespace clawlite {
 struct ChunkerConfig {
     int chunkTokens = 200;       // 每个块的目标 token 数
     int overlapTokens = 50;      // 相邻块的重叠 token 数
-    double charsPerToken = 4.0;  // 每个 token 的平均字符数（用于估算）
+    double charsPerToken = 4.0;  // 每个 token 的平均字符数（用于估算，英文~4，CJK~1.5）
+    bool autoDetectCJK = true;   // 自动检测 CJK 文本并调整参数
 };
 
 class Chunker {

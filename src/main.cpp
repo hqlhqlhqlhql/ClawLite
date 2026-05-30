@@ -19,6 +19,39 @@
 
 using namespace clawlite;
 
+// 跨平台 UTF-8 行读取：
+//   - Windows 终端：用 ReadConsoleW 拿宽字符再转 UTF-8，无视活动码页
+//   - 其它情况（重定向 / 非 Windows）：按 UTF-8 字节流走 std::getline
+static bool readLineUtf8(std::string& out) {
+    out.clear();
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (h != INVALID_HANDLE_VALUE && GetFileType(h) == FILE_TYPE_CHAR) {
+        std::wstring wbuf;
+        wchar_t chunk[512];
+        DWORD read = 0;
+        for (;;) {
+            if (!ReadConsoleW(h, chunk, 512, &read, nullptr) || read == 0) {
+                return !wbuf.empty();
+            }
+            wbuf.append(chunk, read);
+            if (!wbuf.empty() && wbuf.back() == L'\n') break;
+        }
+        while (!wbuf.empty() && (wbuf.back() == L'\n' || wbuf.back() == L'\r')) {
+            wbuf.pop_back();
+        }
+        if (wbuf.empty()) return true;
+        int len = WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), (int)wbuf.size(),
+                                      nullptr, 0, nullptr, nullptr);
+        out.resize(static_cast<size_t>(len));
+        WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), (int)wbuf.size(),
+                            out.data(), len, nullptr, nullptr);
+        return true;
+    }
+#endif
+    return static_cast<bool>(std::getline(std::cin, out));
+}
+
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -48,8 +81,9 @@ int main(int argc, char* argv[]) {
     SkillRegistry skillRegistry;
     SkillFilterConfig filterCfg = SkillFilter::detectSystem();
     skillRegistry.loadFromWorkspace(workspaceDir, filterCfg);
-    // B: 上下文引擎（TODO: 实例化具体实现）
-    // auto memory = ...;
+    // B: 上下文引擎
+    auto memory = createContextEngine();
+    memory->initialize(workspaceDir + "/data");
 
     // C: LLM 客户端
     LlmConfig llmConfig;
@@ -65,12 +99,17 @@ int main(int argc, char* argv[]) {
     ToolExecutor tools;
     tools.registerBuiltinTools();
 
+    // 创建默认会话
+    memory->createSession("agent:main:cli:user:default");
+
     // C: Agent 主循环
-    AgentHarness harness(llm, tools, nullptr);
+    AgentHarness harness(llm, tools, memory.get());
 
     // 显示状态
     std::cout << "Skills: " << skillRegistry.size() << " loaded\n";
     std::cout << "Tools:  " << tools.size() << " registered\n";
+    std::cout << "Memory: " << memory->getIndexedFileCount() << " files indexed\n";
+    std::cout << "Model:  " << llmConfig.model << " @ " << llmConfig.baseUrl << "\n";
     std::cout << "\nType /help for commands, /quit to exit.\n\n";
 
     // ── REPL 循环 ─────────────────────────────────────────
@@ -79,7 +118,7 @@ int main(int argc, char* argv[]) {
     while (true) {
         std::cout << "> ";
         std::string input;
-        if (!std::getline(std::cin, input)) break;
+        if (!readLineUtf8(input)) break;
         if (input.empty()) continue;
 
         // 命令处理
@@ -114,8 +153,31 @@ int main(int argc, char* argv[]) {
                 }
             }
             else if (input == "/memory status") {
-                std::cout << "Memory: not initialized\n";
-                // TODO: 显示 memory->getIndexedFileCount() 等
+                std::cout << "Memory: " << memory->getIndexedFileCount() << " files, "
+                          << memory->getIndexedChunkCount() << " chunks indexed\n";
+            }
+            else if (input.substr(0, 12) == "/memory load") {
+                std::string file = input.size() > 13 ? input.substr(13) : "";
+                if (file.empty()) {
+                    std::cout << "Usage: /memory load <file>\n";
+                } else {
+                    memory->indexFile(file);
+                    std::cout << "Loaded: " << file << "\n";
+                }
+            }
+            else if (input.substr(0, 14) == "/memory search") {
+                std::string query = input.size() > 15 ? input.substr(15) : "";
+                if (query.empty()) {
+                    std::cout << "Usage: /memory search <query>\n";
+                } else {
+                    auto results = memory->search(query);
+                    std::cout << "Found " << results.size() << " results:\n";
+                    for (const auto& r : results) {
+                        std::cout << "  [" << r.score << "] " << r.path
+                                  << ":" << r.startLine << "-" << r.endLine << "\n"
+                                  << "    " << r.snippet.substr(0, 100) << "\n";
+                    }
+                }
             }
             else {
                 std::cout << "Unknown command: " << input << "\n";
@@ -133,7 +195,7 @@ int main(int argc, char* argv[]) {
         promptCtx.os = "windows";
 
         std::string systemPrompt = PromptBuilder::buildSystemPrompt(
-            promptCtx, skillRegistry, nullptr
+            promptCtx, skillRegistry, memory.get()
         );
 
         const auto allTools = tools.getAllTools();
@@ -145,7 +207,7 @@ int main(int argc, char* argv[]) {
             systemPrompt += "- If the user message contains both a greeting and another task, call the hello tool and the task tool(s).\n";
         }
 
-        std::vector<Message> history;  // TODO: 从 session 获取
+        auto history = memory->getSessionHistory("agent:main:cli:user:default", 20);
         auto result = harness.runTurn(systemPrompt, history, input);
 
         if (result.status == RunStatus::Success) {

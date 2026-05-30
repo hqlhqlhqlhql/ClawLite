@@ -1,25 +1,22 @@
 // ClawLite — 搜索测试
-// TODO: B 同学补充测试用例
+// 简化为仅测试 FTS5 路径（向量检索已删除）
 
 #include "memory/search_manager.h"
 #include "memory/memory_store.h"
-#include "memory/embedding.h"
 #include "test_helpers.h"
 #include <iostream>
 
 using namespace clawlite;
 
-void testCosineSimilarity() {
-    std::vector<double> a = {1.0, 0.0, 0.0};
-    std::vector<double> b = {1.0, 0.0, 0.0};
-    std::vector<double> c = {0.0, 1.0, 0.0};
-
-    TEST_ASSERT(cosineSimilarity(a, b) > 0.99);  // 相同向量
-    TEST_ASSERT(cosineSimilarity(a, c) < 0.01);  // 正交向量
-    std::cout << "  [PASS] testCosineSimilarity\n";
+void testSearchManagerConstructor() {
+    MemoryStore store;
+    store.open(":memory:");
+    SearchManager search(store);
+    std::cout << "  [PASS] testSearchManagerConstructor\n";
+    store.close();
 }
 
-void testVectorSearch() {
+void testSearchManagerFts() {
     MemoryStore store;
     store.open(":memory:");
 
@@ -40,28 +37,23 @@ void testVectorSearch() {
     chunk2.hash = "h2";
     store.upsertChunk(chunk2);
 
-    // 创建搜索管理器
-    auto embedding = std::make_unique<LocalMockEmbedding>(128);
-    SearchManager search(store, std::move(embedding));
+    // 创建搜索管理器（仅 FTS5）
+    SearchManager search(store);
 
-    auto results = search.vectorSearch("fox", 5);
-    // 至少应该有结果
-    std::cout << "  [PASS] testVectorSearch (" << results.size() << " results)\n";
+    // 测试 FTS5 搜索
+    SearchConfig cfg;
+    cfg.topK = 5;
+    auto results = search.search("fox", cfg);
+    std::cout << "  [PASS] testSearchManagerFts (" << results.size() << " results)\n";
 
     store.close();
-}
-
-void testHybridSearch() {
-    // TODO: 测试混合搜索
-    std::cout << "  [SKIP] testHybridSearch (需要完整实现)\n";
 }
 
 int run_search_tests() {
     std::cout << "Search Tests:\n";
     RESET_FAILURES();
-    testCosineSimilarity();
-    testVectorSearch();
-    testHybridSearch();
+    testSearchManagerConstructor();
+    testSearchManagerFts();
     int f = GET_FAILURES();
     if (f == 0) std::cout << "All search tests passed.\n";
     else std::cout << f << " search test(s) failed.\n";

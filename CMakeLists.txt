@@ -55,10 +55,10 @@ add_library(clawlite_memory STATIC
     src/memory/context_engine.cpp
     src/memory/memory_store.cpp
     src/memory/chunker.cpp
-    src/memory/embedding.cpp
     src/memory/search_manager.cpp
     src/memory/session_store.cpp
     src/memory/compaction.cpp
+    src/memory/file_state_cache.cpp
 )
 target_include_directories(clawlite_memory PUBLIC include)
 target_link_libraries(clawlite_memory PUBLIC clawlite_core sqlite3)
@@ -108,6 +108,8 @@ set(TEST_SOURCES
     tests/test_session_store.cpp
     tests/test_prompt_builder.cpp
     tests/test_llm.cpp
+    tests/test_file_state_cache.cpp
+    tests/test_compaction.cpp
 )
 
 add_executable(clawlite_tests ${TEST_SOURCES})
@@ -123,12 +125,15 @@ endif()
 
 add_test(NAME all_tests COMMAND clawlite_tests)
 
-# ── RemoteEmbedding 测试（需要 llama-server 运行）────────
-add_executable(test_remote_embedding tests/test_remote_embedding.cpp)
-target_link_libraries(test_remote_embedding PRIVATE
+# ── B 模块 Benchmark ──────────────────────────────────────
+add_executable(bench_b_module tests/bench_b_module.cpp)
+target_link_libraries(bench_b_module PRIVATE
     clawlite_core
     clawlite_memory
 )
 if(WIN32)
-    target_link_libraries(test_remote_embedding PRIVATE ws2_32)
+    target_link_libraries(bench_b_module PRIVATE ws2_32)
 endif()
+
+# ── RemoteEmbedding 测试（需要 llama-server 运行）────────
+# [已删除] RemoteEmbedding 和向量搜索已归档，不再编译此目标

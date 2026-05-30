@@ -1,5 +1,6 @@
-// ClawLite — 混合检索管理器实现
-// TODO: B 同学实现 — 数据结构课程重点！
+// ClawLite — FTS5 全文检索管理器实现
+// 简化为仅 FTS5 路径（向量检索已删除，主循环不需要）。
+// 仅在 /memory search 命令式触发时使用。
 
 #include "memory/search_manager.h"
 #include <algorithm>
@@ -7,156 +8,57 @@
 
 namespace clawlite {
 
-SearchManager::SearchManager(MemoryStore& store, std::unique_ptr<IEmbeddingProvider> embedding)
-    : m_store(store), m_embedding(std::move(embedding)) {}
+SearchManager::SearchManager(MemoryStore& store)
+    : m_store(store) {}
 
 std::vector<SearchResult> SearchManager::search(
     const std::string& query,
     const SearchConfig& config
 ) {
-    // TODO: 实现 — 混合搜索算法
-    //
-    // 参考：openclaw-main/packages/memory-host-sdk/host/types.ts:search
-    //
-    // 步骤：
-    //   1. vectorResults = vectorSearch(query, config.vectorCandidateLimit)
-    //   2. textResults = ftsSearch(query, config.ftsCandidateLimit)
-    //   3. merged = mergeResults(vectorResults, textResults, config.vectorWeight, config.textWeight)
-    //   4. sort merged by score descending
-    //   5. return top config.topK
+    auto results = ftsSearch(query, config.topK);
 
-    auto vectorResults = vectorSearch(query, config.vectorCandidateLimit);
-    auto textResults = ftsSearch(query, config.ftsCandidateLimit);
-    auto merged = mergeResults(vectorResults, textResults, config.vectorWeight, config.textWeight);
-
-    // 按分数降序排序
-    std::sort(merged.begin(), merged.end(),
-        [](const SearchResult& a, const SearchResult& b) {
-            return a.score > b.score;
-        });
-
-    // 取 top-k
-    if ((int)merged.size() > config.topK) {
-        merged.resize(config.topK);
-    }
-    return merged;
-}
-
-std::vector<SearchResult> SearchManager::vectorSearch(const std::string& query, int topK) {
-    // 向量搜索：暴力遍历 + 排序，O(n*d)
-    // 大规模数据需要 ANN 索引（如 HNSW），课程作业规模足够
-    std::vector<SearchResult> results;
-    if (query.empty()) return results;
-
-    auto queryEmbedding = m_embedding->embedQuery(query);
-    auto allChunks = m_store.getAllChunks();
-
-    for (const auto& chunk : allChunks) {
-        if (chunk.embedding.empty()) continue;
-        double score = cosineSimilarity(queryEmbedding, chunk.embedding);
-        SearchResult r;
-        r.path = chunk.path;
-        r.startLine = chunk.startLine;
-        r.endLine = chunk.endLine;
-        r.score = score;
-        r.vectorScore = score;
-        r.snippet = chunk.text.substr(0, 200);
-        r.source = SearchSource::Memory;
-        results.push_back(r);
-    }
-
-    // 按分数降序排序，取 top-k
     std::sort(results.begin(), results.end(),
         [](const SearchResult& a, const SearchResult& b) {
             return a.score > b.score;
         });
-    if ((int)results.size() > topK) results.resize(topK);
+
+    if ((int)results.size() > config.topK) {
+        results.resize(config.topK);
+    }
     return results;
 }
 
 std::vector<SearchResult> SearchManager::ftsSearch(const std::string& query, int topK) {
-    // FTS5 全文搜索：调 memory_store 的 FTS，再查完整 chunk 信息
     std::vector<SearchResult> results;
     if (query.empty()) return results;
 
     auto ftsResults = m_store.ftsSearch(query, topK);
+    if (ftsResults.empty()) return results;
+
+    // 一次性建立 hash->chunk 映射，O(n)，避免对每个结果做全表扫描 O(n^2)
+    auto allChunks = m_store.getAllChunks();
+    std::unordered_map<std::string, MemoryChunk> chunkMap;
+    chunkMap.reserve(allChunks.size());
+    for (auto& chunk : allChunks) {
+        chunkMap[chunk.hash] = std::move(chunk);
+    }
+
     for (const auto& [chunkId, bm25Score] : ftsResults) {
-        // 用 chunkId（即 hash）查找完整 chunk
-        auto allChunks = m_store.getAllChunks();
-        for (const auto& chunk : allChunks) {
-            if (chunk.hash == chunkId) {
-                SearchResult r;
-                r.path = chunk.path;
-                r.startLine = chunk.startLine;
-                r.endLine = chunk.endLine;
-                r.score = bm25Score;
-                r.textScore = bm25Score;
-                r.snippet = chunk.text.substr(0, 200);
-                r.source = SearchSource::Memory;
-                results.push_back(r);
-                break;
-            }
+        auto it = chunkMap.find(chunkId);
+        if (it != chunkMap.end()) {
+            const auto& chunk = it->second;
+            SearchResult r;
+            r.path = chunk.path;
+            r.startLine = chunk.startLine;
+            r.endLine = chunk.endLine;
+            r.score = bm25Score;
+            r.textScore = bm25Score;
+            r.snippet = chunk.text.size() > 200 ? chunk.text.substr(0, 200) : chunk.text;
+            r.source = SearchSource::Memory;
+            results.push_back(r);
         }
     }
     return results;
-}
-
-std::vector<SearchResult> SearchManager::mergeResults(
-    const std::vector<SearchResult>& vectorResults,
-    const std::vector<SearchResult>& textResults,
-    double vectorWeight,
-    double textWeight
-) {
-    // 结果合并：按 path+startLine 去重，加权求和
-    // 数据结构：unordered_map 实现 O(1) 查重
-    std::unordered_map<std::string, size_t> index;  // key → 在 merged 中的位置
-    std::vector<SearchResult> merged;
-
-    // 归一化两个列表
-    auto normVec = vectorResults;
-    auto normText = textResults;
-    normalizeScores(normVec);
-    normalizeScores(normText);
-
-    // 加入向量搜索结果
-    for (auto& r : normVec) {
-        std::string key = r.path + ":" + std::to_string(r.startLine);
-        r.score *= vectorWeight;
-        merged.push_back(r);
-        index[key] = merged.size() - 1;
-    }
-
-    // 加入全文搜索结果，重复的累加分数
-    for (auto& r : normText) {
-        std::string key = r.path + ":" + std::to_string(r.startLine);
-        r.score *= textWeight;
-        auto it = index.find(key);
-        if (it != index.end()) {
-            // 同一 chunk 在两个列表都出现，分数相加
-            merged[it->second].score += r.score;
-            merged[it->second].textScore = r.textScore;
-        } else {
-            merged.push_back(r);
-            index[key] = merged.size() - 1;
-        }
-    }
-
-    return merged;
-}
-
-void SearchManager::normalizeScores(std::vector<SearchResult>& results) {
-    // TODO: 实现分数归一化
-    // 找到 maxScore，然后每个分数 /= maxScore
-    if (results.empty()) return;
-    double maxScore = 0;
-    for (const auto& r : results) {
-        if (r.score > maxScore) maxScore = r.score;
-    }
-    if (maxScore > 0) {
-        for (auto& r : results) {
-            r.score /= maxScore;
-        }
-    }
 }
 
 } // namespace clawlite

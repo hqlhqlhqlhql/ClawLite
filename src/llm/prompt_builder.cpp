@@ -75,22 +75,11 @@ std::string PromptBuilder::buildToolsSection(const std::vector<Tool>& tools) {
 }
 
 std::string PromptBuilder::buildMemorySection(IContextEngine* memory, int tokenBudget) {
-    // TODO: 实现内存上下文注入
-    //
-    // 算法：
-    //   1. auto result = memory->assemble(tokenBudget)
-    //   2. 将 result.messages 格式化为文本
-    //   3. 包装在 "Relevant context from memory:" 标签下
-    if (!memory) return "";
-
-    auto result = memory->assemble(tokenBudget);
-    if (result.messages.empty()) return "";
-
-    std::string section = "Relevant context from memory:\n";
-    for (const auto& msg : result.messages) {
-        section += "- " + msg.content + "\n";
-    }
-    return section;
+    // 删除自动 RAG 注入。memory 仅通过 /memory search 命令式触发，
+    // 不再在 system prompt 中自动塞入检索结果（防止上下文污染）。
+    (void)memory;     // 避免 unused parameter 警告
+    (void)tokenBudget;
+    return "";
 }
 
 std::string PromptBuilder::buildRuntimeSection(const PromptBuildContext& ctx) {

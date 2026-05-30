@@ -18,7 +18,7 @@ int EventBus::subscribe(EventType type, EventListener listener) {
 void EventBus::unsubscribe(int listenerId) {
     for (auto it = m_listeners.begin(); it != m_listeners.end(); ++it) {
         if (it->id == listenerId) {
-            m_listeners.erase(it);
+            m_listeners.erase(it);  
             return;
         }
     }

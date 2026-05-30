@@ -2,10 +2,45 @@
 // TODO: B 同学实现
 
 #include "memory/session_store.h"
+#include <fstream>
 #include <sstream>
 #include <algorithm>
 
 namespace clawlite {
+
+// JSON 转义辅助（本地使用）
+static std::string escapeJson(const std::string& s) {
+    std::string result;
+    for (char c : s) {
+        if (c == '"') result += "\\\"";
+        else if (c == '\\') result += "\\\\";
+        else if (c == '\n') result += "\\n";
+        else if (c == '\r') result += "\\r";
+        else if (c == '\t') result += "\\t";
+        else result += c;
+    }
+    return result;
+}
+
+static std::string unescapeJson(const std::string& s) {
+    std::string result;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '\\' && i + 1 < s.size()) {
+            char next = s[i + 1];
+            if (next == '"') { result += '"'; i++; }
+            else if (next == '\\') { result += '\\'; i++; }
+            else if (next == 'n') { result += '\n'; i++; }
+            else if (next == 'r') { result += '\r'; i++; }
+            else if (next == 't') { result += '\t'; i++; }
+            else result += s[i];
+        } else {
+            result += s[i];
+        }
+    }
+    return result;
+}
+
+// roleToString 已在 types.h 中定义，无需重复
 
 void SessionStore::createSession(const std::string& sessionKey) {
     if (m_sessions.find(sessionKey) == m_sessions.end()) {
@@ -74,64 +109,103 @@ void SessionStore::clear() {
     m_sessions.clear();
 }
 
-SessionKeyInfo SessionStore::parseSessionKey(const std::string& key) {
-    // TODO: 实现层级键解析
-    // 格式：agent:<agentId>:<channel>:<peerKind>:<peerId>[:thread:<threadId>]
-    //
-    // 参考：openclaw-main/src/sessions/session-key-utils.ts:parseAgentSessionKey
-    // 算法：按 ':' 分割，逐段提取
-    //
-    // 示例：
-    //   "agent:main:cli:user:default"
-    //   → { agentId: "main", channel: "cli", peerKind: "user", peerId: "default" }
-    //
-    //   "agent:main:discord:group:123:thread:456"
-    //   → { agentId: "main", channel: "discord", peerKind: "group", peerId: "123", threadId: "456" }
+// ── JSONL 持久化 ──────────────────────────────────────────
 
-    SessionKeyInfo info;
-    info.rawKey = key;
+void SessionStore::save(const std::string& path) {
+    // JSONL 格式：每行一个 JSON 对象
+    // {"session_key":"...", "role":"...", "content":"...", "timestamp":...}
+    // 每次覆盖写全量（避免 append-only 导致重复行）
+    std::ofstream out(path, std::ios::trunc);
+    if (!out.is_open()) return;
 
-    std::vector<std::string> parts;
-    std::istringstream ss(key);
-    std::string part;
-    while (std::getline(ss, part, ':')) {
-        parts.push_back(part);
-    }
-
-    if (parts.size() >= 1 && parts[0] == "agent") {
-        if (parts.size() >= 2) info.agentId = parts[1];
-        if (parts.size() >= 3) info.channel = parts[2];
-        if (parts.size() >= 4) info.peerKind = parts[3];
-        if (parts.size() >= 5) info.peerId = parts[4];
-        for (size_t i = 5; i < parts.size() - 1; i++) {
-            if (parts[i] == "thread") {
-                info.threadId = parts[i + 1];
-                break;
-            }
-        }
-    }
-
-    return info;
-}
-
-std::string SessionStore::buildSessionKey(
-    const std::string& agentId,
-    const std::string& channel,
-    const std::string& peerKind,
-    const std::string& peerId
-) {
-    return "agent:" + agentId + ":" + channel + ":" + peerKind + ":" + peerId;
-}
-
-std::vector<std::string> SessionStore::listSessionsByAgent(const std::string& agentId) const {
-    std::vector<std::string> result;
-    std::string prefix = "agent:" + agentId + ":";
     for (const auto& [key, entry] : m_sessions) {
-        if (key.substr(0, prefix.size()) == prefix) {
-            result.push_back(key);
+        for (const auto& msg : entry.messages) {
+            out << "{\"session_key\":\"" << key
+                << "\",\"role\":\"" << roleToString(msg.role)
+                << "\",\"content\":\"" << escapeJson(msg.content)
+                << "\",\"timestamp\":" << msg.timestamp
+                << "}\n";
         }
     }
-    return result;
+    out.close();
+}
+
+void SessionStore::load(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) return;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+
+        // 简单的 JSON 解析（手动解析，避免依赖）
+        // 格式：{"session_key":"...", "role":"...", "content":"...", "timestamp":...}
+        auto extractValue = [&line](const std::string& key) -> std::string {
+            size_t pos = line.find("\"" + key + "\"");
+            if (pos == std::string::npos) return "";
+            pos = line.find(":", pos + key.size() + 2);
+            if (pos == std::string::npos) return "";
+            pos++;  // skip ':'
+
+            while (pos < line.size() && line[pos] == ' ') pos++;
+            if (pos >= line.size()) return "";
+
+            if (line[pos] == '"') {
+                // 字符串值：跳过转义引号 \"，找到真正的结束引号
+                size_t start = pos + 1;
+                size_t end = start;
+                while (end < line.size()) {
+                    if (line[end] == '\\' && end + 1 < line.size()) {
+                        end += 2;  // 跳过转义字符
+                    } else if (line[end] == '"') {
+                        break;
+                    } else {
+                        end++;
+                    }
+                }
+                return line.substr(start, end - start);
+            }
+
+            // 数值
+            size_t end = line.find_first_of(",}", pos);
+            if (end == std::string::npos) end = line.size();
+            return line.substr(pos, end - pos);
+        };
+
+        std::string sessionKey = extractValue("session_key");
+        std::string roleStr = extractValue("role");
+        std::string content = extractValue("content");
+        std::string timestampStr = extractValue("timestamp");
+
+        if (sessionKey.empty() || roleStr.empty()) continue;
+
+        // 解析 role
+        Role role = Role::User;
+        if (roleStr == "assistant") role = Role::Assistant;
+        else if (roleStr == "system") role = Role::System;
+
+        // 解析 timestamp
+        int64_t timestamp = 0;
+        try {
+            timestamp = std::stoll(timestampStr);
+        } catch (...) {
+            timestamp = nowMs();
+        }
+
+        // 创建消息
+        Message msg;
+        msg.role = role;
+        msg.content = unescapeJson(content);
+        msg.timestamp = timestamp;
+
+        // 追加到对应会话
+        if (!hasSession(sessionKey)) {
+            createSession(sessionKey);
+        }
+        m_sessions[sessionKey].messages.push_back(msg);
+    }
+
+    in.close();
 }
 
 } // namespace clawlite

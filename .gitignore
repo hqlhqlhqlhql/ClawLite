@@ -60,6 +60,7 @@ CTestTestfile.cmake
 # Project Specific
 ClawLite.zip
 openclaw-main/
+claude-code-main/
 
 # OS
 .DS_Store

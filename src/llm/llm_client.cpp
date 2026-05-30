@@ -1,6 +1,7 @@
 #include "llm/llm_client.h"
 
 #include <cctype>
+#include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -393,6 +394,13 @@ std::string LlmClient::buildRequestJson(
             if (!msg.name.empty()) out << ",\"name\":\"" << jsonEscape(msg.name) << "\"";
         }
         out << ",\"content\":\"" << jsonEscape(msg.content) << "\"";
+        // DeepSeek V4 thinking models require `reasoning_content` to be replayed
+        // on every assistant turn. OpenAI-compatible providers ignore unknown
+        // fields, so we always emit an empty placeholder here.
+        // 参考: openclaw-main/src/plugin-sdk/provider-stream-shared.ts:284
+        if (msg.role == Role::Assistant) {
+            out << ",\"reasoning_content\":\"\"";
+        }
         if (!msg.toolCalls.empty()) {
             out << ",\"tool_calls\":[";
             for (size_t j = 0; j < msg.toolCalls.size(); ++j) {
