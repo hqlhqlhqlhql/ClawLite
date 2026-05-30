@@ -57,11 +57,37 @@ CTestTestfile.cmake
 *.db-shm
 *.db-wal
 
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+
+# Generated benchmark / project artifacts (optional, remove if you want to track them)
+benchmark.csv
+skill_prompt_benchmark.png
+project_structure.txt
+
 # Project Specific
 ClawLite.zip
 openclaw-main/
-claude-code-main/
+.venv/
+benchmark_results*.csv
+benchmark_plots*/
+.clawlite_gui.pid
+clawlite_config.env
+A_personal_report.docx
 
 # OS
 .DS_Store
+.AppleDouble
+.LSOverride
 Thumbs.db
+
+# Optional: binary executable name (adjust to your actual output)
+clawlite

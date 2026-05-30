@@ -4,8 +4,10 @@
 // 数据结构：std::set 存储监听器，支持订阅/取消订阅/广播
 
 #include <functional>
+#include <mutex>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace clawlite {
 
@@ -59,6 +61,7 @@ private:
     };
 
     std::set<ListenerEntry> m_listeners;  // 数据结构：有序集合存储监听器
+    std::mutex m_mutex;
     int m_nextId = 0;
 };
 

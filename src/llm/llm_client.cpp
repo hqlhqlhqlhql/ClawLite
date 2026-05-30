@@ -1,6 +1,7 @@
 #include "llm/llm_client.h"
 
 #include <cctype>
+#include <cstdint>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -37,7 +38,7 @@ struct Json {
         return it == objectValue.end() ? nullJson : it->second;
     }
 
-    std::string asString(const std::string& fallback = "") const {
+    std::string asString(const std::string& defaultValue = "") const {
         if (type == Type::String) return stringValue;
         if (type == Type::Number) {
             std::ostringstream oss;
@@ -45,12 +46,12 @@ struct Json {
             return oss.str();
         }
         if (type == Type::Bool) return boolValue ? "true" : "false";
-        return fallback;
+        return defaultValue;
     }
 
-    int asInt(int fallback = 0) const {
+    int asInt(int defaultValue = 0) const {
         if (type == Type::Number) return static_cast<int>(numberValue);
-        return fallback;
+        return defaultValue;
     }
 };
 
@@ -114,6 +115,39 @@ private:
         throw std::runtime_error("invalid json value");
     }
 
+    // 读取 4 位十六进制 Unicode 码点
+    uint32_t parseHex4() {
+        uint32_t cp = 0;
+        for (int i = 0; i < 4 && m_pos < m_text.size(); ++i) {
+            char h = m_text[m_pos++];
+            cp <<= 4;
+            if (h >= '0' && h <= '9') cp |= (h - '0');
+            else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
+            else throw std::runtime_error("invalid hex in \\u escape");
+        }
+        return cp;
+    }
+
+    // 将 Unicode 码点编码为 UTF-8 字节追加到字符串
+    static void appendUtf8(std::string& out, uint32_t cp) {
+        if (cp < 0x80) {
+            out += static_cast<char>(cp);
+        } else if (cp < 0x800) {
+            out += static_cast<char>(0xC0 | (cp >> 6));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += static_cast<char>(0xE0 | (cp >> 12));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (cp >> 18));
+            out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+    }
+
     Json parseString() {
         if (!consume('"')) throw std::runtime_error("expected string");
         Json v;
@@ -133,12 +167,30 @@ private:
                     case 'n': v.stringValue += '\n'; break;
                     case 'r': v.stringValue += '\r'; break;
                     case 't': v.stringValue += '\t'; break;
-                    case 'u':
-                        v.stringValue += "\\u";
-                        for (int i = 0; i < 4 && m_pos < m_text.size(); ++i) {
-                            v.stringValue += m_text[m_pos++];
+                    case 'u': {
+                        uint32_t cp = parseHex4();
+                        // 处理 UTF-16 代理对：\uD800-\uDBFF 后跟 \uDC00-\uDFFF
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            if (m_pos + 1 < m_text.size() &&
+                                m_text[m_pos] == '\\' && m_text[m_pos + 1] == 'u') {
+                                m_pos += 2;
+                                uint32_t low = parseHex4();
+                                if (low >= 0xDC00 && low <= 0xDFFF) {
+                                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                                } else {
+                                    // 无效代理对，输出替换字符
+                                    appendUtf8(v.stringValue, 0xFFFD);
+                                    appendUtf8(v.stringValue, low);
+                                    break;
+                                }
+                            } else {
+                                appendUtf8(v.stringValue, 0xFFFD);
+                                break;
+                            }
                         }
+                        appendUtf8(v.stringValue, cp);
                         break;
+                    }
                     default:
                         v.stringValue += e;
                 }
@@ -222,6 +274,14 @@ std::string trimTrailingSlash(std::string url) {
     return url;
 }
 
+std::string chatCompletionsEndpoint(const std::string& baseUrl) {
+    std::string base = trimTrailingSlash(baseUrl);
+    if (base.size() >= 3 && base.substr(base.size() - 3) == "/v1") {
+        return base + "/chat/completions";
+    }
+    return base + "/v1/chat/completions";
+}
+
 std::string quoteShellArg(const std::string& value) {
 #ifdef _WIN32
     std::string out = "\"";
@@ -292,6 +352,16 @@ LlmResponse LlmClient::chat(
         resp.error = "missing API key";
         return resp;
     }
+    if (m_config.baseUrl.empty()) {
+        resp.success = false;
+        resp.error = "missing base URL";
+        return resp;
+    }
+    if (m_config.model.empty()) {
+        resp.success = false;
+        resp.error = "missing model";
+        return resp;
+    }
 
     std::string requestBody = buildRequestJson(messages, tools, false);
     std::string requestPath = makeTempPath("request.json");
@@ -305,12 +375,16 @@ LlmResponse LlmClient::chat(
         out << requestBody;
     }
 
-    std::string endpoint = trimTrailingSlash(m_config.baseUrl) + "/v1/chat/completions";
+    std::string endpoint = chatCompletionsEndpoint(m_config.baseUrl);
     std::ostringstream cmd;
     cmd << "curl -sS --max-time " << (m_config.timeoutMs / 1000)
+#ifdef _WIN32
+        << " --ssl-no-revoke"
+#endif
         << " -X POST " << quoteShellArg(endpoint)
         << " -H " << quoteShellArg("Content-Type: application/json")
         << " -H " << quoteShellArg("Authorization: Bearer " + m_config.apiKey)
+        << (m_config.sendApiKeyHeader ? " -H " + quoteShellArg("api-key: " + m_config.apiKey) : "")
         << " --data-binary @" << quoteShellArg(requestPath);
 
     int exitCode = 0;
@@ -337,6 +411,16 @@ LlmResponse LlmClient::chatStream(
         resp.error = "missing API key";
         return resp;
     }
+    if (m_config.baseUrl.empty()) {
+        resp.success = false;
+        resp.error = "missing base URL";
+        return resp;
+    }
+    if (m_config.model.empty()) {
+        resp.success = false;
+        resp.error = "missing model";
+        return resp;
+    }
 
     std::string requestBody = buildRequestJson(messages, tools, true);
     std::string requestPath = makeTempPath("stream_request.json");
@@ -350,12 +434,16 @@ LlmResponse LlmClient::chatStream(
         out << requestBody;
     }
 
-    std::string endpoint = trimTrailingSlash(m_config.baseUrl) + "/v1/chat/completions";
+    std::string endpoint = chatCompletionsEndpoint(m_config.baseUrl);
     std::ostringstream cmd;
     cmd << "curl -sS --no-buffer --max-time " << (m_config.timeoutMs / 1000)
+#ifdef _WIN32
+        << " --ssl-no-revoke"
+#endif
         << " -X POST " << quoteShellArg(endpoint)
         << " -H " << quoteShellArg("Content-Type: application/json")
         << " -H " << quoteShellArg("Authorization: Bearer " + m_config.apiKey)
+        << (m_config.sendApiKeyHeader ? " -H " + quoteShellArg("api-key: " + m_config.apiKey) : "")
         << " --data-binary @" << quoteShellArg(requestPath);
 
     int exitCode = 0;
@@ -380,7 +468,10 @@ std::string LlmClient::buildRequestJson(
     out << "{";
     out << "\"model\":\"" << jsonEscape(m_config.model) << "\",";
     out << "\"temperature\":" << m_config.temperature << ",";
-    out << "\"max_tokens\":" << m_config.maxTokens << ",";
+    const std::string maxField = m_config.maxTokensField.empty()
+        ? "max_tokens"
+        : m_config.maxTokensField;
+    out << "\"" << jsonEscape(maxField) << "\":" << m_config.maxTokens << ",";
     out << "\"stream\":" << (stream ? "true" : "false") << ",";
     out << "\"messages\":[";
 

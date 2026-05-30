@@ -35,6 +35,7 @@ target_compile_definitions(sqlite3 PRIVATE
 add_library(clawlite_core STATIC
     src/core/types.cpp
     src/core/event_bus.cpp
+    src/core/config.cpp
 )
 target_include_directories(clawlite_core PUBLIC include)
 
@@ -53,12 +54,15 @@ target_link_libraries(clawlite_skill PUBLIC clawlite_core)
 
 add_library(clawlite_memory STATIC
     src/memory/context_engine.cpp
+    src/memory/file_tree_index.cpp
+    src/memory/context_budgeter.cpp
+    src/memory/session_summary_tree.cpp
     src/memory/memory_store.cpp
     src/memory/chunker.cpp
+    src/memory/embedding.cpp
     src/memory/search_manager.cpp
     src/memory/session_store.cpp
     src/memory/compaction.cpp
-    src/memory/file_state_cache.cpp
 )
 target_include_directories(clawlite_memory PUBLIC include)
 target_link_libraries(clawlite_memory PUBLIC clawlite_core sqlite3)
@@ -94,6 +98,31 @@ if(WIN32)
     target_link_libraries(clawlite PRIVATE ws2_32)
 endif()
 
+add_executable(clawlite_gui src/gui_server.cpp)
+target_include_directories(clawlite_gui PRIVATE third_party/httplib)
+target_link_libraries(clawlite_gui PRIVATE
+    clawlite_core
+    clawlite_skill
+    clawlite_memory
+    clawlite_llm
+)
+if(WIN32)
+    target_link_libraries(clawlite_gui PRIVATE ws2_32)
+endif()
+
+# ── A 模块 benchmark ───────────────────────────────────────
+
+add_executable(skill_prompt_benchmark
+    benchmarks/skill_prompt_benchmark.cpp
+)
+target_link_libraries(skill_prompt_benchmark PRIVATE
+    clawlite_core
+    clawlite_skill
+)
+if(WIN32)
+    target_link_libraries(skill_prompt_benchmark PRIVATE ws2_32)
+endif()
+
 # ── 测试 ──────────────────────────────────────────────────
 
 enable_testing()
@@ -103,13 +132,15 @@ set(TEST_SOURCES
     tests/test_skill_parser.cpp
     tests/test_skill_registry.cpp
     tests/test_memory_store.cpp
+    tests/test_file_tree_index.cpp
+    tests/test_context_budgeter.cpp
+    tests/test_session_summary_tree.cpp
     tests/test_chunker.cpp
     tests/test_search.cpp
     tests/test_session_store.cpp
+    tests/test_compaction.cpp
     tests/test_prompt_builder.cpp
     tests/test_llm.cpp
-    tests/test_file_state_cache.cpp
-    tests/test_compaction.cpp
 )
 
 add_executable(clawlite_tests ${TEST_SOURCES})
@@ -124,16 +155,3 @@ if(WIN32)
 endif()
 
 add_test(NAME all_tests COMMAND clawlite_tests)
-
-# ── B 模块 Benchmark ──────────────────────────────────────
-add_executable(bench_b_module tests/bench_b_module.cpp)
-target_link_libraries(bench_b_module PRIVATE
-    clawlite_core
-    clawlite_memory
-)
-if(WIN32)
-    target_link_libraries(bench_b_module PRIVATE ws2_32)
-endif()
-
-# ── RemoteEmbedding 测试（需要 llama-server 运行）────────
-# [已删除] RemoteEmbedding 和向量搜索已归档，不再编译此目标
