@@ -82,6 +82,7 @@ void printHelp() {
     std::cout << "Commands:\n";
     std::cout << "  /new             - Start a new session\n";
     std::cout << "  /sessions        - List all sessions\n";
+    std::cout << "  /switch <n>      - Switch to session by index (see /sessions)\n";
     std::cout << "  /skills          - List loaded skills\n";
     std::cout << "  /tools           - List registered tools\n";
     std::cout << "  /memory status   - Show tree/chunk/summary/cache stats\n";
@@ -213,14 +214,40 @@ int main(int argc, char* argv[]) {
             auto sessions = memory->listSessions();
             std::string current = memory->getCurrentSession();
             std::cout << "Sessions (" << sessions.size() << "):\n";
-            for (const auto& s : sessions) {
-                auto history = memory->getSessionHistory(s, 100);
+            for (size_t i = 0; i < sessions.size(); ++i) {
+                auto history = memory->getSessionHistory(sessions[i], 100);
                 int turns = 0;
                 for (const auto& m : history) {
                     if (m.role == Role::User) ++turns;
                 }
-                std::cout << "  " << (s == current ? "* " : "  ")
-                          << s << " (" << turns << " turns)\n";
+                std::cout << "  [" << i << "] "
+                          << (sessions[i] == current ? "* " : "  ")
+                          << sessions[i] << " (" << turns << " turns)\n";
+            }
+            std::cout << "Use /switch <index> to switch session.\n";
+            continue;
+        }
+        if (input.rfind("/switch ", 0) == 0) {
+            auto sessions = memory->listSessions();
+            std::string idxStr = input.substr(std::string("/switch ").size());
+            try {
+                size_t idx = static_cast<size_t>(std::stoi(idxStr));
+                if (idx < sessions.size()) {
+                    memory->saveSessions(dataDir + "/sessions.jsonl");
+                    memory->setCurrentSession(sessions[idx]);
+                    harness.resetConversation();
+                    auto history = memory->getSessionHistory(sessions[idx], 100);
+                    int turns = 0;
+                    for (const auto& m : history) {
+                        if (m.role == Role::User) ++turns;
+                    }
+                    std::cout << "Switched to: " << sessions[idx]
+                              << " (" << turns << " turns)\n";
+                } else {
+                    std::cout << "Invalid index. Use /sessions to see available sessions.\n";
+                }
+            } catch (...) {
+                std::cout << "Usage: /switch <index>\n";
             }
             continue;
         }
