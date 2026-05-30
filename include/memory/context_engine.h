@@ -106,11 +106,24 @@ public:
     // 创建会话
     virtual void createSession(const std::string& sessionKey) = 0;
 
+    // 切换当前会话
+    virtual void setCurrentSession(const std::string& sessionKey) = 0;
+
+    // 获取当前会话 key
+    virtual std::string getCurrentSession() const = 0;
+
+    // 列出所有会话 key
+    virtual std::vector<std::string> listSessions() const = 0;
+
     // 获取会话历史
     virtual std::vector<Message> getSessionHistory(
         const std::string& sessionKey,
         int maxTurns = 20
     ) = 0;
+
+    // 持久化：保存/加载会话到 JSONL
+    virtual void saveSessions(const std::string& path) = 0;
+    virtual void loadSessions(const std::string& path) = 0;
 
     // 获取索引的文件/块数量（用于状态显示）
     virtual int getIndexedFileCount() const = 0;

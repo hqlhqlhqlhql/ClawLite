@@ -80,6 +80,8 @@ std::string detectWorkspace(const std::string& configured) {
 
 void printHelp() {
     std::cout << "Commands:\n";
+    std::cout << "  /new             - Start a new session\n";
+    std::cout << "  /sessions        - List all sessions\n";
     std::cout << "  /skills          - List loaded skills\n";
     std::cout << "  /tools           - List registered tools\n";
     std::cout << "  /memory status   - Show tree/chunk/summary/cache stats\n";
@@ -162,7 +164,14 @@ int main(int argc, char* argv[]) {
     auto memory = createContextEngine(toContextOptions(appConfig.memory));
     std::filesystem::create_directories(dataDir);
     memory->initialize(dataDir);
-    memory->createSession("agent:main:cli:user:default");
+    memory->loadSessions(dataDir + "/sessions.jsonl");
+    if (memory->listSessions().empty()) {
+        memory->createSession("agent:main:cli:user:default");
+    } else {
+        // 恢复到最后一个会话
+        auto sessions = memory->listSessions();
+        memory->setCurrentSession(sessions.back());
+    }
 
     LlmClient llm(appConfig.llm);
     ToolExecutor tools;
@@ -183,11 +192,36 @@ int main(int argc, char* argv[]) {
         if (input.empty()) continue;
 
         if (input == "/quit" || input == "/exit") {
+            memory->saveSessions(dataDir + "/sessions.jsonl");
             std::cout << "Goodbye!\n";
             break;
         }
         if (input == "/help") {
             printHelp();
+            continue;
+        }
+        if (input == "/new") {
+            memory->saveSessions(dataDir + "/sessions.jsonl");
+            std::string newKey = "agent:main:cli:user:" + std::to_string(nowMs());
+            memory->createSession(newKey);
+            memory->setCurrentSession(newKey);
+            harness.resetConversation();
+            std::cout << "New session: " << newKey << "\n";
+            continue;
+        }
+        if (input == "/sessions") {
+            auto sessions = memory->listSessions();
+            std::string current = memory->getCurrentSession();
+            std::cout << "Sessions (" << sessions.size() << "):\n";
+            for (const auto& s : sessions) {
+                auto history = memory->getSessionHistory(s, 100);
+                int turns = 0;
+                for (const auto& m : history) {
+                    if (m.role == Role::User) ++turns;
+                }
+                std::cout << "  " << (s == current ? "* " : "  ")
+                          << s << " (" << turns << " turns)\n";
+            }
             continue;
         }
         if (input == "/skills") {

@@ -105,6 +105,15 @@ size_t SessionStore::sessionCount() const {
     return m_sessions.size();
 }
 
+std::vector<std::string> SessionStore::sessionKeys() const {
+    std::vector<std::string> keys;
+    keys.reserve(m_sessions.size());
+    for (const auto& [key, entry] : m_sessions) {
+        keys.push_back(key);
+    }
+    return keys;
+}
+
 void SessionStore::clear() {
     m_sessions.clear();
 }

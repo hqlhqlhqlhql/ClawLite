@@ -44,6 +44,9 @@ public:
     // 获取会话数量
     size_t sessionCount() const;
 
+    // 列出所有会话 key
+    std::vector<std::string> sessionKeys() const;
+
     // 清空所有会话
     void clear();
 
