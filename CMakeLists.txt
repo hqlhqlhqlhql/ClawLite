@@ -110,6 +110,19 @@ if(WIN32)
     target_link_libraries(clawlite_gui PRIVATE ws2_32)
 endif()
 
+# ── A 模块 benchmark ───────────────────────────────────────
+
+add_executable(skill_prompt_benchmark
+    benchmarks/skill_prompt_benchmark.cpp
+)
+target_link_libraries(skill_prompt_benchmark PRIVATE
+    clawlite_core
+    clawlite_skill
+)
+if(WIN32)
+    target_link_libraries(skill_prompt_benchmark PRIVATE ws2_32)
+endif()
+
 # ── 测试 ──────────────────────────────────────────────────
 
 enable_testing()
