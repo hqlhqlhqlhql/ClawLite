@@ -1,6 +1,7 @@
 #include "llm/llm_client.h"
 
 #include <cctype>
+#include <cstdint>
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -114,6 +115,39 @@ private:
         throw std::runtime_error("invalid json value");
     }
 
+    // 读取 4 位十六进制 Unicode 码点
+    uint32_t parseHex4() {
+        uint32_t cp = 0;
+        for (int i = 0; i < 4 && m_pos < m_text.size(); ++i) {
+            char h = m_text[m_pos++];
+            cp <<= 4;
+            if (h >= '0' && h <= '9') cp |= (h - '0');
+            else if (h >= 'a' && h <= 'f') cp |= (h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') cp |= (h - 'A' + 10);
+            else throw std::runtime_error("invalid hex in \\u escape");
+        }
+        return cp;
+    }
+
+    // 将 Unicode 码点编码为 UTF-8 字节追加到字符串
+    static void appendUtf8(std::string& out, uint32_t cp) {
+        if (cp < 0x80) {
+            out += static_cast<char>(cp);
+        } else if (cp < 0x800) {
+            out += static_cast<char>(0xC0 | (cp >> 6));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            out += static_cast<char>(0xE0 | (cp >> 12));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        } else {
+            out += static_cast<char>(0xF0 | (cp >> 18));
+            out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+    }
+
     Json parseString() {
         if (!consume('"')) throw std::runtime_error("expected string");
         Json v;
@@ -133,12 +167,30 @@ private:
                     case 'n': v.stringValue += '\n'; break;
                     case 'r': v.stringValue += '\r'; break;
                     case 't': v.stringValue += '\t'; break;
-                    case 'u':
-                        v.stringValue += "\\u";
-                        for (int i = 0; i < 4 && m_pos < m_text.size(); ++i) {
-                            v.stringValue += m_text[m_pos++];
+                    case 'u': {
+                        uint32_t cp = parseHex4();
+                        // 处理 UTF-16 代理对：\uD800-\uDBFF 后跟 \uDC00-\uDFFF
+                        if (cp >= 0xD800 && cp <= 0xDBFF) {
+                            if (m_pos + 1 < m_text.size() &&
+                                m_text[m_pos] == '\\' && m_text[m_pos + 1] == 'u') {
+                                m_pos += 2;
+                                uint32_t low = parseHex4();
+                                if (low >= 0xDC00 && low <= 0xDFFF) {
+                                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                                } else {
+                                    // 无效代理对，输出替换字符
+                                    appendUtf8(v.stringValue, 0xFFFD);
+                                    appendUtf8(v.stringValue, low);
+                                    break;
+                                }
+                            } else {
+                                appendUtf8(v.stringValue, 0xFFFD);
+                                break;
+                            }
                         }
+                        appendUtf8(v.stringValue, cp);
                         break;
+                    }
                     default:
                         v.stringValue += e;
                 }
