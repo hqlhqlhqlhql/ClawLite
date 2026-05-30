@@ -80,6 +80,9 @@ std::string detectWorkspace(const std::string& configured) {
 
 void printHelp() {
     std::cout << "Commands:\n";
+    std::cout << "  /new             - Start a new session\n";
+    std::cout << "  /sessions        - List all sessions\n";
+    std::cout << "  /switch <n>      - Switch to session by index (see /sessions)\n";
     std::cout << "  /skills          - List loaded skills\n";
     std::cout << "  /tools           - List registered tools\n";
     std::cout << "  /memory status   - Show tree/chunk/summary/cache stats\n";
@@ -162,7 +165,14 @@ int main(int argc, char* argv[]) {
     auto memory = createContextEngine(toContextOptions(appConfig.memory));
     std::filesystem::create_directories(dataDir);
     memory->initialize(dataDir);
-    memory->createSession("agent:main:cli:user:default");
+    memory->loadSessions(dataDir + "/sessions.jsonl");
+    if (memory->listSessions().empty()) {
+        memory->createSession("agent:main:cli:user:default");
+    } else {
+        // 恢复到最后一个会话
+        auto sessions = memory->listSessions();
+        memory->setCurrentSession(sessions.back());
+    }
 
     LlmClient llm(appConfig.llm);
     ToolExecutor tools;
@@ -183,11 +193,62 @@ int main(int argc, char* argv[]) {
         if (input.empty()) continue;
 
         if (input == "/quit" || input == "/exit") {
+            memory->saveSessions(dataDir + "/sessions.jsonl");
             std::cout << "Goodbye!\n";
             break;
         }
         if (input == "/help") {
             printHelp();
+            continue;
+        }
+        if (input == "/new") {
+            memory->saveSessions(dataDir + "/sessions.jsonl");
+            std::string newKey = "agent:main:cli:user:" + std::to_string(nowMs());
+            memory->createSession(newKey);
+            memory->setCurrentSession(newKey);
+            harness.resetConversation();
+            std::cout << "New session: " << newKey << "\n";
+            continue;
+        }
+        if (input == "/sessions") {
+            auto sessions = memory->listSessions();
+            std::string current = memory->getCurrentSession();
+            std::cout << "Sessions (" << sessions.size() << "):\n";
+            for (size_t i = 0; i < sessions.size(); ++i) {
+                auto history = memory->getSessionHistory(sessions[i], 100);
+                int turns = 0;
+                for (const auto& m : history) {
+                    if (m.role == Role::User) ++turns;
+                }
+                std::cout << "  [" << i << "] "
+                          << (sessions[i] == current ? "* " : "  ")
+                          << sessions[i] << " (" << turns << " turns)\n";
+            }
+            std::cout << "Use /switch <index> to switch session.\n";
+            continue;
+        }
+        if (input.rfind("/switch ", 0) == 0) {
+            auto sessions = memory->listSessions();
+            std::string idxStr = input.substr(std::string("/switch ").size());
+            try {
+                size_t idx = static_cast<size_t>(std::stoi(idxStr));
+                if (idx < sessions.size()) {
+                    memory->saveSessions(dataDir + "/sessions.jsonl");
+                    memory->setCurrentSession(sessions[idx]);
+                    harness.resetConversation();
+                    auto history = memory->getSessionHistory(sessions[idx], 100);
+                    int turns = 0;
+                    for (const auto& m : history) {
+                        if (m.role == Role::User) ++turns;
+                    }
+                    std::cout << "Switched to: " << sessions[idx]
+                              << " (" << turns << " turns)\n";
+                } else {
+                    std::cout << "Invalid index. Use /sessions to see available sessions.\n";
+                }
+            } catch (...) {
+                std::cout << "Usage: /switch <index>\n";
+            }
             continue;
         }
         if (input == "/skills") {

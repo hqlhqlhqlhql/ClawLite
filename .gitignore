@@ -76,6 +76,8 @@ project_structure.txt
 # Project Specific
 ClawLite.zip
 openclaw-main/
+.clawlite/
+claude-code-main/
 .venv/
 benchmark_results*.csv
 benchmark_plots*/

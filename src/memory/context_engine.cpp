@@ -267,8 +267,35 @@ public:
         m_sessions.createSession(sessionKey);
     }
 
+    void setCurrentSession(const std::string& sessionKey) override {
+        if (!m_sessions.hasSession(sessionKey)) {
+            m_sessions.createSession(sessionKey);
+        }
+        m_sessionKey = sessionKey;
+    }
+
+    std::string getCurrentSession() const override {
+        return m_sessionKey;
+    }
+
+    std::vector<std::string> listSessions() const override {
+        return m_sessions.sessionKeys();
+    }
+
     std::vector<Message> getSessionHistory(const std::string& sessionKey, int maxTurns) override {
         return m_sessions.getHistory(sessionKey, maxTurns);
+    }
+
+    void saveSessions(const std::string& path) override {
+        m_sessions.save(path);
+    }
+
+    void loadSessions(const std::string& path) override {
+        m_sessions.load(path);
+        // 确保当前 session key 存在
+        if (!m_sessions.hasSession(m_sessionKey)) {
+            m_sessions.createSession(m_sessionKey);
+        }
     }
 
     int getIndexedFileCount() const override {
