@@ -1,5 +1,5 @@
 // ClawLite — 主程序入口
-// 精简最终版：围绕文件树、结构化分块、摘要树和上下文预算做 CLI 演示。
+// 轻量级通用 Agent Runtime
 
 #include "core/config.h"
 #include "core/types.h"
@@ -12,6 +12,7 @@
 #include "skill/skill_filter.h"
 #include "skill/skill_registry.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -22,6 +23,39 @@
 #endif
 
 using namespace clawlite;
+
+// 跨平台 UTF-8 行读取：
+//   - Windows 终端：用 ReadConsoleW 拿宽字符再转 UTF-8，无视活动码页
+//   - 其它情况（重定向 / 非 Windows）：按 UTF-8 字节流走 std::getline
+static bool readLineUtf8(std::string& out) {
+    out.clear();
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+    if (h != INVALID_HANDLE_VALUE && GetFileType(h) == FILE_TYPE_CHAR) {
+        std::wstring wbuf;
+        wchar_t chunk[512];
+        DWORD read = 0;
+        for (;;) {
+            if (!ReadConsoleW(h, chunk, 512, &read, nullptr) || read == 0) {
+                return !wbuf.empty();
+            }
+            wbuf.append(chunk, read);
+            if (!wbuf.empty() && wbuf.back() == L'\n') break;
+        }
+        while (!wbuf.empty() && (wbuf.back() == L'\n' || wbuf.back() == L'\r')) {
+            wbuf.pop_back();
+        }
+        if (wbuf.empty()) return true;
+        int len = WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), (int)wbuf.size(),
+                                      nullptr, 0, nullptr, nullptr);
+        out.resize(static_cast<size_t>(len));
+        WideCharToMultiByte(CP_UTF8, 0, wbuf.data(), (int)wbuf.size(),
+                            out.data(), len, nullptr, nullptr);
+        return true;
+    }
+#endif
+    return static_cast<bool>(std::getline(std::cin, out));
+}
 
 namespace {
 
@@ -74,7 +108,7 @@ std::string buildSystemPrompt(const std::string& workspaceDir,
                               const SkillRegistry& skills,
                               const ToolExecutor& tools) {
     PromptBuildContext promptCtx;
-    promptCtx.basePrompt = "You are ClawLite, a concise assistant for a data structures course project.";
+    promptCtx.basePrompt = "You are ClawLite, a lightweight general-purpose AI agent runtime.";
     promptCtx.workspaceDir = workspaceDir;
     promptCtx.model = llmConfig.model;
     promptCtx.os = "windows";
@@ -117,8 +151,8 @@ int main(int argc, char* argv[]) {
     std::string dataDir = appConfig.dataDir.empty() ? workspaceDir + "/.clawlite" : appConfig.dataDir;
 
     std::cout << "========================================\n";
-    std::cout << "  ClawLite Data Structures Runtime\n";
-    std::cout << "  Core + CLI final edition\n";
+    std::cout << "  ClawLite Agent Runtime\n";
+    std::cout << "  Lightweight General-Purpose Agent\n";
     std::cout << "========================================\n\n";
 
     SkillRegistry skillRegistry;
@@ -144,7 +178,7 @@ int main(int argc, char* argv[]) {
     while (true) {
         std::cout << "> ";
         std::string input;
-        if (!std::getline(std::cin, input)) break;
+        if (!readLineUtf8(input)) break;
         if (input.empty()) continue;
 
         if (input == "/quit" || input == "/exit") {
