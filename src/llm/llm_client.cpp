@@ -37,7 +37,7 @@ struct Json {
         return it == objectValue.end() ? nullJson : it->second;
     }
 
-    std::string asString(const std::string& fallback = "") const {
+    std::string asString(const std::string& defaultValue = "") const {
         if (type == Type::String) return stringValue;
         if (type == Type::Number) {
             std::ostringstream oss;
@@ -45,12 +45,12 @@ struct Json {
             return oss.str();
         }
         if (type == Type::Bool) return boolValue ? "true" : "false";
-        return fallback;
+        return defaultValue;
     }
 
-    int asInt(int fallback = 0) const {
+    int asInt(int defaultValue = 0) const {
         if (type == Type::Number) return static_cast<int>(numberValue);
-        return fallback;
+        return defaultValue;
     }
 };
 
@@ -222,6 +222,14 @@ std::string trimTrailingSlash(std::string url) {
     return url;
 }
 
+std::string chatCompletionsEndpoint(const std::string& baseUrl) {
+    std::string base = trimTrailingSlash(baseUrl);
+    if (base.size() >= 3 && base.substr(base.size() - 3) == "/v1") {
+        return base + "/chat/completions";
+    }
+    return base + "/v1/chat/completions";
+}
+
 std::string quoteShellArg(const std::string& value) {
 #ifdef _WIN32
     std::string out = "\"";
@@ -292,6 +300,16 @@ LlmResponse LlmClient::chat(
         resp.error = "missing API key";
         return resp;
     }
+    if (m_config.baseUrl.empty()) {
+        resp.success = false;
+        resp.error = "missing base URL";
+        return resp;
+    }
+    if (m_config.model.empty()) {
+        resp.success = false;
+        resp.error = "missing model";
+        return resp;
+    }
 
     std::string requestBody = buildRequestJson(messages, tools, false);
     std::string requestPath = makeTempPath("request.json");
@@ -305,12 +323,16 @@ LlmResponse LlmClient::chat(
         out << requestBody;
     }
 
-    std::string endpoint = trimTrailingSlash(m_config.baseUrl) + "/v1/chat/completions";
+    std::string endpoint = chatCompletionsEndpoint(m_config.baseUrl);
     std::ostringstream cmd;
     cmd << "curl -sS --max-time " << (m_config.timeoutMs / 1000)
+#ifdef _WIN32
+        << " --ssl-no-revoke"
+#endif
         << " -X POST " << quoteShellArg(endpoint)
         << " -H " << quoteShellArg("Content-Type: application/json")
         << " -H " << quoteShellArg("Authorization: Bearer " + m_config.apiKey)
+        << (m_config.sendApiKeyHeader ? " -H " + quoteShellArg("api-key: " + m_config.apiKey) : "")
         << " --data-binary @" << quoteShellArg(requestPath);
 
     int exitCode = 0;
@@ -337,6 +359,16 @@ LlmResponse LlmClient::chatStream(
         resp.error = "missing API key";
         return resp;
     }
+    if (m_config.baseUrl.empty()) {
+        resp.success = false;
+        resp.error = "missing base URL";
+        return resp;
+    }
+    if (m_config.model.empty()) {
+        resp.success = false;
+        resp.error = "missing model";
+        return resp;
+    }
 
     std::string requestBody = buildRequestJson(messages, tools, true);
     std::string requestPath = makeTempPath("stream_request.json");
@@ -350,12 +382,16 @@ LlmResponse LlmClient::chatStream(
         out << requestBody;
     }
 
-    std::string endpoint = trimTrailingSlash(m_config.baseUrl) + "/v1/chat/completions";
+    std::string endpoint = chatCompletionsEndpoint(m_config.baseUrl);
     std::ostringstream cmd;
     cmd << "curl -sS --no-buffer --max-time " << (m_config.timeoutMs / 1000)
+#ifdef _WIN32
+        << " --ssl-no-revoke"
+#endif
         << " -X POST " << quoteShellArg(endpoint)
         << " -H " << quoteShellArg("Content-Type: application/json")
         << " -H " << quoteShellArg("Authorization: Bearer " + m_config.apiKey)
+        << (m_config.sendApiKeyHeader ? " -H " + quoteShellArg("api-key: " + m_config.apiKey) : "")
         << " --data-binary @" << quoteShellArg(requestPath);
 
     int exitCode = 0;
@@ -380,7 +416,10 @@ std::string LlmClient::buildRequestJson(
     out << "{";
     out << "\"model\":\"" << jsonEscape(m_config.model) << "\",";
     out << "\"temperature\":" << m_config.temperature << ",";
-    out << "\"max_tokens\":" << m_config.maxTokens << ",";
+    const std::string maxField = m_config.maxTokensField.empty()
+        ? "max_tokens"
+        : m_config.maxTokensField;
+    out << "\"" << jsonEscape(maxField) << "\":" << m_config.maxTokens << ",";
     out << "\"stream\":" << (stream ? "true" : "false") << ",";
     out << "\"messages\":[";
 

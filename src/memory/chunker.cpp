@@ -5,8 +5,100 @@
 #include <sstream>
 #include <algorithm>
 #include <functional>
+#include <cctype>
 
 namespace clawlite {
+namespace {
+
+struct Section {
+    int startLine = 1;
+    int endLine = 1;
+    int depth = 0;
+    std::string headingPath;
+    std::vector<std::string> lines;
+};
+
+int utf8Codepoints(const std::string& text) {
+    int count = 0;
+    for (unsigned char ch : text) {
+        if ((ch & 0xC0) != 0x80) ++count;
+    }
+    return count;
+}
+
+int lineCost(const std::string& line, const ChunkerConfig& config) {
+    return (config.cjkCharacterMode ? utf8Codepoints(line) : static_cast<int>(line.size())) + 1;
+}
+
+int headingLevel(const std::string& line) {
+    int count = 0;
+    while (count < static_cast<int>(line.size()) && count < 6 &&
+           line[static_cast<size_t>(count)] == '#') {
+        ++count;
+    }
+    if (count == 0 || count >= static_cast<int>(line.size())) return 0;
+    return std::isspace(static_cast<unsigned char>(line[static_cast<size_t>(count)])) ? count : 0;
+}
+
+std::string headingTitle(const std::string& line, int level) {
+    std::string title = line.substr(static_cast<size_t>(level));
+    while (!title.empty() && std::isspace(static_cast<unsigned char>(title.front()))) {
+        title.erase(title.begin());
+    }
+    while (!title.empty() && std::isspace(static_cast<unsigned char>(title.back()))) {
+        title.pop_back();
+    }
+    return title;
+}
+
+std::string joinHeadings(const std::vector<std::string>& headings) {
+    std::string result;
+    for (const auto& h : headings) {
+        if (h.empty()) continue;
+        if (!result.empty()) result += " > ";
+        result += h;
+    }
+    return result;
+}
+
+std::vector<Section> buildSections(const std::vector<std::string>& lines) {
+    std::vector<Section> sections;
+    std::vector<std::string> headings(6);
+    Section current;
+    current.startLine = 1;
+
+    auto flush = [&](int endLine) {
+        if (current.lines.empty()) return;
+        current.endLine = endLine;
+        sections.push_back(current);
+        current = Section{};
+    };
+
+    for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+        const auto& line = lines[static_cast<size_t>(i)];
+        int level = headingLevel(line);
+        if (level > 0) {
+            flush(i);
+            headings[static_cast<size_t>(level - 1)] = headingTitle(line, level);
+            for (int j = level; j < 6; ++j) headings[static_cast<size_t>(j)].clear();
+            current.startLine = i + 1;
+            current.depth = level;
+            current.headingPath = joinHeadings(headings);
+        } else if (current.lines.empty()) {
+            current.startLine = i + 1;
+            current.headingPath = joinHeadings(headings);
+            current.depth = 0;
+            for (const auto& h : headings) {
+                if (!h.empty()) ++current.depth;
+            }
+        }
+        current.lines.push_back(line);
+    }
+    flush(static_cast<int>(lines.size()));
+    return sections;
+}
+
+} // namespace
 
 std::vector<MemoryChunk> Chunker::chunkMarkdown(
     const std::string& filePath,
@@ -66,127 +158,48 @@ std::vector<MemoryChunk> Chunker::chunkMarkdown(
 
     if (lines.empty()) return chunks;
 
-    // CJK 检测：统计 CJK 字符占比，自动调整 charsPerToken
-    double charsPerToken = config.charsPerToken;
-    bool isCJK = false;
-    if (config.autoDetectCJK) {
-        int cjkChars = 0;
-        int totalChars = 0;
-        for (const auto& ln : lines) {
-            for (size_t i = 0; i < ln.size(); ) {
-                totalChars++;
-                unsigned char c = static_cast<unsigned char>(ln[i]);
-                if (c >= 0x80) {
-                    unsigned int cp = 0;
-                    int bytes = 0;
-                    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; bytes = 1; }
-                    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; bytes = 2; }
-                    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; bytes = 3; }
-                    for (int b = 0; b < bytes && i + 1 + b < ln.size(); b++) {
-                        cp = (cp << 6) | (static_cast<unsigned char>(ln[i + 1 + b]) & 0x3F);
-                    }
-                    if ((cp >= 0x4E00 && cp <= 0x9FFF) ||
-                        (cp >= 0x3400 && cp <= 0x4DBF) ||
-                        (cp >= 0xF900 && cp <= 0xFAFF) ||
-                        (cp >= 0x3040 && cp <= 0x30FF) ||
-                        (cp >= 0xAC00 && cp <= 0xD7AF) ||
-                        (cp >= 0xFF00 && cp <= 0xFFEF)) {
-                        cjkChars++;
-                    }
-                    i += 1 + bytes;
-                } else {
-                    i++;
-                }
+    int maxChars = std::max(1, static_cast<int>(config.chunkTokens * config.charsPerToken));
+    int stepChars = static_cast<int>((config.chunkTokens - config.overlapTokens) * config.charsPerToken);
+    if (stepChars <= 0) stepChars = std::max(1, maxChars / 2);
+
+    auto sections = buildSections(lines);
+    for (const auto& section : sections) {
+        int start = 0;
+        while (start < static_cast<int>(section.lines.size())) {
+            int end = start;
+            int charCount = 0;
+            while (end < static_cast<int>(section.lines.size()) && charCount < maxChars) {
+                charCount += lineCost(section.lines[static_cast<size_t>(end)], config);
+                ++end;
             }
-        }
-        if (totalChars > 0 && (double)cjkChars / totalChars > 0.3) {
-            charsPerToken = 1.5;
-            isCJK = true;
-        }
-    }
 
-    // CJK 场景：预处理——将超长行在标点边界处拆分为多行
-    if (isCJK) {
-        std::vector<std::string> processed;
-        processed.reserve(lines.size() * 2);
-        // 标点字符集（CJK 停顿点 + ASCII 标点）
-        auto isBoundary = [](unsigned int cp) -> bool {
-            return (cp >= 0x3000 && cp <= 0x303F) ||
-                   cp == 0xFF0C || cp == 0xFF0E ||
-                   cp == ',' || cp == '.' || cp == '!' || cp == '?' ||
-                   cp == ';' || cp == ':' || cp == ' ';
-        };
-
-        // 预估的每行字符上限
-        int lineLimit = static_cast<int>(config.chunkTokens * charsPerToken) / 2;
-
-        for (const auto& ln : lines) {
-            if ((int)ln.size() <= lineLimit) {
-                processed.push_back(ln);
-                continue;
+            std::string text;
+            for (int i = start; i < end; ++i) {
+                if (i > start) text += '\n';
+                text += section.lines[static_cast<size_t>(i)];
             }
-            int pos = 0;
-            while (pos < (int)ln.size()) {
-                int endPos = std::min(pos + lineLimit, (int)ln.size());
-                if (endPos >= (int)ln.size()) {
-                    processed.push_back(ln.substr(pos));
-                    break;
-                }
-                int split = endPos;
-                for (int j = endPos - 1; j > pos; j--) {
-                    unsigned char c = static_cast<unsigned char>(ln[j]);
-                    if (c < 0x80) {
-                        if (isBoundary(c)) { split = j + 1; break; }
-                    } else if ((c & 0xF0) == 0xE0 && j + 2 < endPos) {
-                        unsigned int cp = ((c & 0x0F) << 12) |
-                            ((static_cast<unsigned char>(ln[j+1]) & 0x3F) << 6) |
-                            (static_cast<unsigned char>(ln[j+2]) & 0x3F);
-                        if (isBoundary(cp)) { split = j + 3; break; }
-                    }
-                }
-                if (split == pos) split = endPos;
-                processed.push_back(ln.substr(pos, split - pos));
-                pos = split;
+
+            MemoryChunk chunk;
+            chunk.path = filePath;
+            chunk.startLine = section.startLine + start;
+            chunk.endLine = section.startLine + end - 1;
+            chunk.text = text;
+            chunk.hash = computeHash(filePath + ":" + std::to_string(chunk.startLine) + ":" + text);
+            chunk.id = filePath + ":" + std::to_string(chunk.startLine) + "-" +
+                std::to_string(chunk.endLine) + ":" + chunk.hash;
+            chunk.headingPath = section.headingPath;
+            chunk.depth = section.depth;
+            chunk.parentId = computeHash(section.headingPath.empty() ? filePath : section.headingPath);
+            chunk.tokenCost = estimateTokens(chunk.text, config.charsPerToken);
+            chunks.push_back(std::move(chunk));
+
+            int stepUsed = 0;
+            while (stepUsed < stepChars && start < end) {
+                stepUsed += lineCost(section.lines[static_cast<size_t>(start)], config);
+                ++start;
             }
+            if (start == end && end < static_cast<int>(section.lines.size())) ++start;
         }
-        lines = std::move(processed);
-    }
-
-    int maxChars = static_cast<int>(config.chunkTokens * charsPerToken);
-    int stepChars = static_cast<int>((config.chunkTokens - config.overlapTokens) * charsPerToken);
-
-    // 滑动窗口算法
-    int start = 0;
-    while (start < (int)lines.size()) {
-        int end = start;
-        int charCount = 0;
-        // 扩展窗口右边界
-        while (end < (int)lines.size() && charCount < maxChars) {
-            charCount += (int)lines[end].size() + 1;
-            end++;
-        }
-
-        // 拼接文本
-        std::string text;
-        for (int i = start; i < end; i++) {
-            if (i > start) text += '\n';
-            text += lines[i];
-        }
-        MemoryChunk chunk;
-        chunk.path = filePath;
-        chunk.startLine = start + 1;  // 1-indexed
-        chunk.endLine = end;
-        chunk.text = text;
-        chunk.hash = computeHash(text);
-        chunks.push_back(chunk);
-        // 滑动窗口前进
-        int stepUsed = 0;
-        while (stepUsed < stepChars && start < end) {
-            stepUsed += (int)lines[start].size() + 1;
-            start++;
-        }
-        // 防止无限循环：至少前进 1 行
-        if (start == end && end < (int)lines.size()) start++;
     }
 
     return chunks;

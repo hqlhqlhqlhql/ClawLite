@@ -174,6 +174,23 @@ CompactResult Compactor::compact(
     return {true, false, "unknown strategy", "", totalTokens, totalTokens};
 }
 
+CompactResult Compactor::truncateBaseline(
+    std::vector<Message>& messages,
+    int targetTokens
+) {
+    int before = countTotalTokens(messages);
+    if (before <= targetTokens) {
+        return {true, false, "baseline no truncation needed", "", before, before};
+    }
+
+    while (!messages.empty() && countTotalTokens(messages) > targetTokens) {
+        messages.erase(messages.begin());
+    }
+
+    int after = countTotalTokens(messages);
+    return {true, true, "baseline truncated oldest messages", "", before, after};
+}
+
 int Compactor::countTotalTokens(const std::vector<Message>& messages) {
     int total = 0;
     for (const auto& msg : messages) {

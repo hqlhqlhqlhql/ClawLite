@@ -60,7 +60,11 @@ CTestTestfile.cmake
 # Project Specific
 ClawLite.zip
 openclaw-main/
-claude-code-main/
+.venv/
+benchmark_results*.csv
+benchmark_plots*/
+.clawlite_gui.pid
+clawlite_config.env
 
 # OS
 .DS_Store
