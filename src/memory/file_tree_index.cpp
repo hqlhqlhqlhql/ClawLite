@@ -67,7 +67,7 @@ FileTreeStats FileTreeIndex::build(const std::string& rootPath) {
     m_nodes.clear();
     m_stats = FileTreeStats{};
 
-    std::filesystem::path root = std::filesystem::absolute(rootPath);
+    std::filesystem::path root = std::filesystem::weakly_canonical(std::filesystem::absolute(rootPath));
     int rootIndex = buildNode(root.string(), -1, root.string());
     if (rootIndex >= 0) {
         m_stats.rootHash = m_nodes[static_cast<size_t>(rootIndex)].hash;
