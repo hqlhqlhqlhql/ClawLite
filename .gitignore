@@ -1,95 +1,43 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
+```
+# Compiled and build artifacts
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
 *.exe
+*.dll
+*.so
+*.a
 *.out
-*.app
 
-# IDEs
-.vscode/
-*.swp
-*.swo
-.idea/
-.vs/
-
-# CMake
-build/
-CMakeCache.txt
-CMakeFiles/
-CMakeScripts/
-cmake_install.cmake
-install_manifest.txt
-Makefile
-compile_commands.json
-CTestTestfile.cmake
-
-# SQLite
-*.db
-*.sqlite
-*.sqlite3
-*.db-journal
-*.db-shm
-*.db-wal
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
+# Dependencies
+node_modules/
 venv/
 .venv/
-env/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+target/
+.gradle/
 
-# Environment files
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
+# Environment
 .env
+.env.local
+*.env.*
 
-# Generated benchmark / project artifacts (optional, remove if you want to track them)
-benchmark.csv
-skill_prompt_benchmark.png
-project_structure.txt
+# Editors
+.vscode/
+.idea/
 
-# Project Specific
-ClawLite.zip
-openclaw-main/
-.clawlite/
-claude-code-main/
-.venv/
-benchmark_results*.csv
-benchmark_plots*/
-.clawlite_gui.pid
-clawlite_config.env
-A_personal_report.docx
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
 
-# OS
-.DS_Store
-.AppleDouble
-.LSOverride
-Thumbs.db
-
-# Optional: binary executable name (adjust to your actual output)
-clawlite
+# Build directories
+build/
+dist/
+```
